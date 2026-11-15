@@ -1,11 +1,8 @@
 import express from 'express';
-import { mkdir, writeFile } from 'node:fs/promises';
-import path from 'node:path';
 import { connectDb } from './db.js';
 import { FitReport } from './models/FitReport.js';
 
 const LABD_URL = 'https://agent.thedevlabs.io/v1/api/chat';
-const REPORTS_DIR = path.resolve('reports');
 const PORT = process.env.PORT || 3001;
 
 const app = express();
@@ -83,14 +80,9 @@ app.post('/api/fit-report', async (req, res) => {
   try {
     const { message, credits } = await askLabd(buildPrompt(resume, jobDescription));
 
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const file = path.join(REPORTS_DIR, `fit-report-${stamp}.md`);
-    await mkdir(REPORTS_DIR, { recursive: true });
-    await writeFile(file, message.content, 'utf8');
-
+    // The report goes back in the response only. Nothing is written to disk.
     res.json({
       report: message.content,
-      savedTo: path.relative(process.cwd(), file),
       percentLeft: credits?.percentLeft ?? null,
     });
   } catch (err) {
@@ -102,7 +94,7 @@ app.post('/api/fit-report', async (req, res) => {
         .json({ error: LABD_MESSAGES[err.status] ?? `labd returned an unexpected ${err.status}.` });
     }
     console.error(err);
-    res.status(500).json({ error: 'Could not write the report.' });
+    res.status(500).json({ error: 'Could not get the report from labd.' });
   }
 });
 
