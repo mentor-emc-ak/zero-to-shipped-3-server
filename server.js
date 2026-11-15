@@ -1,6 +1,8 @@
 import express from 'express';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { connectDb } from './db.js';
+import { FitReport } from './models/FitReport.js';
 
 const LABD_URL = 'https://agent.thedevlabs.io/v1/api/chat';
 const REPORTS_DIR = path.resolve('reports');
@@ -14,7 +16,7 @@ app.use(express.json({ limit: '1mb' }));
 app.use((req, res, next) => {
   res.set('Access-Control-Allow-Origin', process.env.FRONTEND_ORIGIN || '*');
   res.set('Access-Control-Allow-Headers', 'Content-Type');
-  res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
@@ -103,6 +105,29 @@ app.post('/api/fit-report', async (req, res) => {
     res.status(500).json({ error: 'Could not write the report.' });
   }
 });
+
+// Recent runs, newest first. The full labd report is left out to keep the list light.
+app.get('/api/fit-reports', async (req, res) => {
+  try {
+    const reports = await FitReport.find({}, { labdReport: 0, __v: 0 })
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .lean();
+    res.json({ reports });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Could not load the fit history.' });
+  }
+});
+
+// Connect to MongoDB first, then start listening. If the database is unreachable,
+// the server stops with a clear message instead of failing on the first request.
+try {
+  await connectDb();
+} catch (err) {
+  console.error('Could not connect to MongoDB:', err.message);
+  process.exit(1);
+}
 
 app.listen(PORT, () => {
   console.log(`Fit-report server listening on http://localhost:${PORT}`);
