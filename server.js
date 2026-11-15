@@ -1,4 +1,5 @@
 import express from 'express';
+import { createHash } from 'node:crypto';
 import { connectDb } from './db.js';
 import { FitReport } from './models/FitReport.js';
 
@@ -65,12 +66,37 @@ const LABD_MESSAGES = {
   429: 'Too many requests this minute. Try again shortly.',
 };
 
+// Save one run to MongoDB so the history list can show it. The browser sends the
+// scorecard it already computed; the resume text itself is never stored.
+// A failed save is logged but does not stop the learner getting their report.
+async function saveRun(jobDescription, scores, labdReport) {
+  try {
+    await FitReport.create({
+      jobDescriptionHash: createHash('sha256').update(jobDescription).digest('hex'),
+      overallScore: scores.overall,
+      breakdown: scores.breakdown,
+      keywordCount: scores.keywordCount,
+      matchedTerms: scores.matched,
+      missingTerms: scores.missing,
+      strengths: scores.strengths,
+      weaknesses: scores.weaknesses,
+      labdReport,
+    });
+  } catch (err) {
+    console.error('Could not save the fit run:', err.message);
+  }
+}
+
 app.post('/api/fit-report', async (req, res) => {
-  const { resume, jobDescription } = req.body ?? {};
+  const { resume, jobDescription, scores } = req.body ?? {};
 
   if (typeof resume !== 'string' || typeof jobDescription !== 'string' ||
       !resume.trim() || !jobDescription.trim()) {
     return res.status(400).json({ error: 'Send non-empty "resume" and "jobDescription" strings.' });
+  }
+
+  if (!scores || typeof scores !== 'object' || typeof scores.breakdown !== 'object') {
+    return res.status(400).json({ error: 'Send the "scores" from the scorecard with the request.' });
   }
 
   if (!process.env.LABD_API_KEY) {
@@ -80,7 +106,8 @@ app.post('/api/fit-report', async (req, res) => {
   try {
     const { message, credits } = await askLabd(buildPrompt(resume, jobDescription));
 
-    // The report goes back in the response only. Nothing is written to disk.
+    await saveRun(jobDescription, scores, message.content);
+
     res.json({
       report: message.content,
       percentLeft: credits?.percentLeft ?? null,
